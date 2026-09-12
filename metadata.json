@@ -1,0 +1,10 @@
+{
+  "name": "Human Behavior Analyzer",
+  "description": "A refined real-time instrument analyzing observable human facial expressions, visual attention, and behavioral changes from a live camera feed.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
