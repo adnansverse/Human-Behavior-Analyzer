@@ -1,3 +1,15 @@
+export type HumanFriendlyExpression =
+  | 'Very Happy'
+  | 'Happy'
+  | 'Neutral'
+  | 'Sad'
+  | 'Angry'
+  | 'Surprised'
+  | 'Confused'
+  | 'Awkward'
+  | 'Fearful'
+  | 'Disgusted';
+
 export type EstimatedExpression =
   | 'Neutral'
   | 'Happy-looking'
@@ -33,6 +45,8 @@ export type CameraStatus =
   | 'face-partially-visible'
   | 'session-ended';
 
+export type ScanMode = 'quick-15' | 'quick-30' | 'continuous';
+
 export interface FaceBoundingBox {
   x: number;
   y: number;
@@ -42,6 +56,7 @@ export interface FaceBoundingBox {
 
 export interface ObservableSignals {
   estimatedExpression: EstimatedExpression;
+  humanExpression: HumanFriendlyExpression;
   confidence: number; // 0 - 100
   intensity: ExpressionIntensity;
   expressionDistribution: Record<EstimatedExpression, number>; // percentages
@@ -62,10 +77,39 @@ export interface TimelineEvent {
   timestampSeconds: number;
   formattedTime: string;
   expression: EstimatedExpression;
+  humanExpression: HumanFriendlyExpression;
   confidence: number;
   attentionScore: number;
   intensity: ExpressionIntensity;
   engagementScore: number;
+}
+
+export interface SimpleTimelineSegment {
+  id: string;
+  expression: HumanFriendlyExpression;
+  emoji: string;
+  startSeconds: number;
+  endSeconds: number;
+  startTimeFormatted: string;
+  endTimeFormatted: string;
+  durationSeconds: number;
+  formattedDuration: string;
+  attentionScore: number;
+}
+
+export interface ExpressionDuration {
+  expression: HumanFriendlyExpression;
+  emoji: string;
+  seconds: number;
+  formattedDuration: string;
+  percentage: number;
+}
+
+export interface SimplifiedBehaviorChange {
+  icon: 'up' | 'down' | 'stable';
+  text: string;
+  detail?: string;
+  formattedTime?: string;
 }
 
 export interface BehaviorChangeObservation {
@@ -91,7 +135,28 @@ export interface SessionBaseline {
 export interface SessionSummaryData {
   durationSeconds: number;
   formattedDuration: string;
-  dominantExpression: EstimatedExpression;
+  dominantExpression: HumanFriendlyExpression;
+  dominantEmoji: string;
+  dominantDuration: string;
+  dominantOneSentence: string;
+  expressionDurations: ExpressionDuration[];
+  simpleTimeline: SimpleTimelineSegment[];
+  simplifiedChanges: SimplifiedBehaviorChange[];
+  attentionSummary: {
+    average: number;
+    peak: number;
+    statusLabel: string;
+    lookedTowardSeconds: number;
+    lookedAwaySeconds: number;
+    formattedToward: string;
+    formattedAway: string;
+  };
+  engagementSummary: {
+    score: number;
+    label: string;
+    description: string;
+  };
+  // Detailed legacy data for Full Analysis view
   peakAttention: number;
   averageAttention: number;
   overallEngagement: number;
@@ -125,3 +190,4 @@ export interface AppSettings {
   // Privacy
   localProcessingConfirmed: boolean;
 }
+

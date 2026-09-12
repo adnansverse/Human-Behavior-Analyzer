@@ -1,5 +1,6 @@
 import {
   EstimatedExpression,
+  HumanFriendlyExpression,
   ExpressionIntensity,
   AttentionStatus,
   GazeDirection,
@@ -8,6 +9,10 @@ import {
   SessionBaseline,
   TimelineEvent,
   FaceBoundingBox,
+  SessionSummaryData,
+  ExpressionDuration,
+  SimpleTimelineSegment,
+  SimplifiedBehaviorChange,
 } from '../types';
 
 export function formatTime(seconds: number): string {
@@ -16,9 +21,58 @@ export function formatTime(seconds: number): string {
   return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
+export function getExpressionEmoji(exp: HumanFriendlyExpression): string {
+  switch (exp) {
+    case 'Very Happy':
+      return '😄';
+    case 'Happy':
+      return '🙂';
+    case 'Neutral':
+      return '😐';
+    case 'Sad':
+      return '😔';
+    case 'Angry':
+      return '😠';
+    case 'Surprised':
+      return '😲';
+    case 'Confused':
+      return '🤨';
+    case 'Awkward':
+      return '😬';
+    case 'Fearful':
+      return '😨';
+    case 'Disgusted':
+      return '🤢';
+    default:
+      return '😐';
+  }
+}
+
+export function toHumanExpression(
+  estimated: EstimatedExpression,
+  intensity: ExpressionIntensity,
+  confidence: number,
+  gaze: GazeDirection
+): HumanFriendlyExpression {
+  if (estimated === 'Happy-looking') {
+    return intensity === 'High' || confidence > 82 ? 'Very Happy' : 'Happy';
+  }
+  if (estimated === 'Confused-looking') {
+    if (gaze !== 'Center' && intensity === 'Low') return 'Awkward';
+    return 'Confused';
+  }
+  if (estimated === 'Sad-looking') return 'Sad';
+  if (estimated === 'Angry-looking') return 'Angry';
+  if (estimated === 'Surprised-looking') return 'Surprised';
+  if (estimated === 'Fearful-looking') return 'Fearful';
+  if (estimated === 'Disgusted-looking') return 'Disgusted';
+  return 'Neutral';
+}
+
 // Default initial state
 export const DEFAULT_OBSERVABLE_SIGNALS: ObservableSignals = {
   estimatedExpression: 'Neutral',
+  humanExpression: 'Neutral',
   confidence: 76,
   intensity: 'Low',
   expressionDistribution: {
@@ -49,6 +103,7 @@ export class BehaviorAnalysisEngine {
   private history: Array<{
     timestamp: number;
     expression: EstimatedExpression;
+    humanExpression: HumanFriendlyExpression;
     attention: number;
     engagement: number;
     movement: number;
@@ -295,8 +350,11 @@ export class BehaviorAnalysisEngine {
       this.estimatedBlinksPerMinute = Math.round(14 + (Math.sin(sessionElapsedSeconds * 0.3) * 4));
     }
 
+    const humanExpression = toHumanExpression(estimatedExpression, intensity, confidence, gazeDirection);
+
     const signals: ObservableSignals = {
       estimatedExpression,
+      humanExpression,
       confidence,
       intensity,
       expressionDistribution: dist,
@@ -316,6 +374,7 @@ export class BehaviorAnalysisEngine {
     this.history.push({
       timestamp: sessionElapsedSeconds,
       expression: estimatedExpression,
+      humanExpression,
       attention: attentionScore,
       engagement: overallEngagement,
       movement: rawMovement,
@@ -438,56 +497,236 @@ export class BehaviorAnalysisEngine {
     timelineEvents: TimelineEvent[],
     observations: BehaviorChangeObservation[],
     startedAt: Date
-  ) {
+  ): SessionSummaryData | null {
     if (this.history.length === 0) {
       return null;
     }
 
+    const totalSamples = this.history.length;
+    const safeDuration = Math.max(1, durationSeconds);
+
+    // Compute peak & average attention
     const peakAttention = Math.max(...this.history.map((h) => h.attention), 0);
     const avgAttention = Math.round(
-      this.history.reduce((acc, h) => acc + h.attention, 0) / this.history.length
+      this.history.reduce((acc, h) => acc + h.attention, 0) / totalSamples
     );
     const overallEngagement = Math.round(
-      this.history.reduce((acc, h) => acc + h.engagement, 0) / this.history.length
+      this.history.reduce((acc, h) => acc + h.engagement, 0) / totalSamples
     );
 
-    // Dominant expression
-    const counts: Record<string, number> = {};
-    this.history.forEach((h) => {
-      counts[h.expression] = (counts[h.expression] || 0) + 1;
-    });
+    // Count time per human-friendly expression
+    const humanCounts: Record<HumanFriendlyExpression, number> = {
+      'Very Happy': 0,
+      Happy: 0,
+      Neutral: 0,
+      Sad: 0,
+      Angry: 0,
+      Surprised: 0,
+      Confused: 0,
+      Awkward: 0,
+      Fearful: 0,
+      Disgusted: 0,
+    };
 
-    let dominant: EstimatedExpression = 'Neutral';
-    let maxCount = 0;
-    Object.entries(counts).forEach(([exp, c]) => {
-      if (c > maxCount) {
-        maxCount = c;
-        dominant = exp as EstimatedExpression;
+    let lookedTowardSamples = 0;
+    let lookedAwaySamples = 0;
+
+    this.history.forEach((h) => {
+      const exp = h.humanExpression || 'Neutral';
+      humanCounts[exp] = (humanCounts[exp] || 0) + 1;
+
+      if (h.attention >= 65) {
+        lookedTowardSamples++;
+      } else {
+        lookedAwaySamples++;
       }
     });
 
+    // Build sorted expression durations
+    const expressionDurations: ExpressionDuration[] = [];
+    (Object.keys(humanCounts) as HumanFriendlyExpression[]).forEach((exp) => {
+      const count = humanCounts[exp];
+      if (count > 0) {
+        const ratio = count / totalSamples;
+        const expSecs = Math.max(1, Math.round(ratio * safeDuration));
+        const percentage = Math.round(ratio * 100);
+        expressionDurations.push({
+          expression: exp,
+          emoji: getExpressionEmoji(exp),
+          seconds: expSecs,
+          formattedDuration: formatTime(expSecs),
+          percentage,
+        });
+      }
+    });
+
+    // Sort descending by seconds
+    expressionDurations.sort((a, b) => b.seconds - a.seconds);
+
+    // Dominant expression
+    const top = expressionDurations[0] || {
+      expression: 'Neutral' as HumanFriendlyExpression,
+      emoji: '😐',
+      seconds: safeDuration,
+      formattedDuration: formatTime(safeDuration),
+      percentage: 100,
+    };
+
+    // One-sentence summary explanation
+    let dominantOneSentence = `${top.expression} expressions appeared most often during this session.`;
+    if (top.expression === 'Neutral') {
+      dominantOneSentence = 'You maintained a calm, steady neutral focus for most of the session.';
+    } else if (top.expression === 'Happy' || top.expression === 'Very Happy') {
+      dominantOneSentence = 'Happy-looking expressions appeared most often during this session.';
+    } else if (top.expression === 'Confused') {
+      dominantOneSentence = 'Curious or questioning expressions appeared most frequently.';
+    } else if (top.expression === 'Awkward') {
+      dominantOneSentence = 'Hesitant or cautious expressions appeared intermittently.';
+    } else if (top.expression === 'Sad') {
+      dominantOneSentence = 'Subtle reserved or pensive expressions were observed most often.';
+    }
+
+    // Build simplified chronological timeline segments
+    const simpleTimeline: SimpleTimelineSegment[] = [];
+    if (this.history.length > 0) {
+      let currentExp = this.history[0].humanExpression || 'Neutral';
+      let startSec = this.history[0].timestamp;
+      let segAttentionSum = this.history[0].attention;
+      let segCount = 1;
+
+      for (let i = 1; i < this.history.length; i++) {
+        const h = this.history[i];
+        const hExp = h.humanExpression || 'Neutral';
+        if (hExp === currentExp) {
+          segAttentionSum += h.attention;
+          segCount++;
+        } else {
+          const endSec = h.timestamp;
+          const durSec = Math.max(1, endSec - startSec);
+          simpleTimeline.push({
+            id: `seg-${startSec}-${endSec}-${currentExp}`,
+            expression: currentExp,
+            emoji: getExpressionEmoji(currentExp),
+            startSeconds: startSec,
+            endSeconds: endSec,
+            startTimeFormatted: formatTime(startSec),
+            endTimeFormatted: formatTime(endSec),
+            durationSeconds: durSec,
+            formattedDuration: formatTime(durSec),
+            attentionScore: Math.round(segAttentionSum / segCount),
+          });
+          currentExp = hExp;
+          startSec = endSec;
+          segAttentionSum = h.attention;
+          segCount = 1;
+        }
+      }
+
+      // Final segment
+      const endSec = this.history[this.history.length - 1].timestamp;
+      const durSec = Math.max(1, endSec - startSec);
+      simpleTimeline.push({
+        id: `seg-${startSec}-${endSec}-${currentExp}`,
+        expression: currentExp,
+        emoji: getExpressionEmoji(currentExp),
+        startSeconds: startSec,
+        endSeconds: endSec,
+        startTimeFormatted: formatTime(startSec),
+        endTimeFormatted: formatTime(endSec),
+        durationSeconds: durSec,
+        formattedDuration: formatTime(durSec),
+        attentionScore: Math.round(segAttentionSum / segCount),
+      });
+    }
+
+    // Build simplified behavior changes
+    const simplifiedChanges: SimplifiedBehaviorChange[] = [];
+    if (observations.length > 0) {
+      observations.slice(-4).forEach((obs) => {
+        let icon: 'up' | 'down' | 'stable' = 'stable';
+        let text = 'Expression stayed mostly stable';
+        if (obs.type === 'positive-shift' || obs.type === 'attention-rise') {
+          icon = 'up';
+          text = obs.type === 'positive-shift' ? 'Became more expressive' : 'Attention increased';
+        } else if (obs.type === 'negative-shift' || obs.type === 'attention-drop') {
+          icon = 'down';
+          text = obs.type === 'attention-drop' ? 'Attention dropped briefly' : 'Expression shifted';
+        } else if (obs.type === 'movement-increase') {
+          icon = 'up';
+          text = 'Posture / movement shifted';
+        }
+        simplifiedChanges.push({
+          icon,
+          text,
+          detail: obs.observation,
+          formattedTime: obs.formattedTime,
+        });
+      });
+    } else {
+      simplifiedChanges.push({
+        icon: 'stable',
+        text: 'Expression stayed mostly stable throughout the scan',
+      });
+    }
+
+    // Attention summary
+    const lookedTowardSecs = Math.round((lookedTowardSamples / totalSamples) * safeDuration);
+    const lookedAwaySecs = Math.max(0, safeDuration - lookedTowardSecs);
+    let attLabel = 'Moderate focus';
+    if (avgAttention >= 85) attLabel = 'Highly focused';
+    else if (avgAttention >= 70) attLabel = 'Mostly attentive';
+    else if (avgAttention >= 50) attLabel = 'Slight gaze shifts';
+    else attLabel = 'Intermittent focus';
+
+    const attentionSummary = {
+      average: avgAttention,
+      peak: peakAttention,
+      statusLabel: attLabel,
+      lookedTowardSeconds: lookedTowardSecs,
+      lookedAwaySeconds: lookedAwaySecs,
+      formattedToward: formatTime(lookedTowardSecs),
+      formattedAway: formatTime(lookedAwaySecs),
+    };
+
+    // Engagement summary
+    let engLabel = 'Moderate';
+    if (overallEngagement >= 80) engLabel = 'High';
+    else if (overallEngagement >= 65) engLabel = 'Moderate–high';
+    else if (overallEngagement >= 50) engLabel = 'Balanced';
+    else engLabel = 'Mild';
+
+    const engagementSummary = {
+      score: overallEngagement,
+      label: engLabel,
+      description: 'Estimated from observable attention and interaction signals during the session.',
+    };
+
     // Observational summary text strictly avoiding diagnosis
-    let text = `Throughout this ${formatTime(
-      durationSeconds
-    )} session, visible indicators showed a dominant observable expression of ${dominant} (present in approximately ${Math.round(
-      (maxCount / this.history.length) * 100
-    )}% of analyzed frames). Observable visual attention reached a peak of ${peakAttention}%, averaging ${avgAttention}% overall. ${
-      observations.length > 0
-        ? `${observations.length} notable behavioral shifts were logged based strictly on visible facial geometry and frame activity.`
-        : 'Facial indicators remained largely consistent throughout the tracking duration.'
-    } All measurements reflect observable surface signals and do not represent internal subjective emotional states.`;
+    const observationalSummaryText = `During this ${formatTime(
+      safeDuration
+    )} session, visible surface indicators indicated predominantly ${
+      top.expression
+    } expressions (${top.formattedDuration}) with ${avgAttention}% average visual attention. All measurements reflect observable surface signals only.`;
 
     return {
-      durationSeconds,
-      formattedDuration: formatTime(durationSeconds),
-      dominantExpression: dominant,
+      durationSeconds: safeDuration,
+      formattedDuration: formatTime(safeDuration),
+      dominantExpression: top.expression,
+      dominantEmoji: top.emoji,
+      dominantDuration: top.formattedDuration,
+      dominantOneSentence,
+      expressionDurations,
+      simpleTimeline,
+      simplifiedChanges,
+      attentionSummary,
+      engagementSummary,
       peakAttention,
       averageAttention: avgAttention,
       overallEngagement,
       majorChangesCount: observations.length,
       timelineEvents,
       observations,
-      observationalSummaryText: text,
+      observationalSummaryText,
       startedAt: startedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       endedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
     };

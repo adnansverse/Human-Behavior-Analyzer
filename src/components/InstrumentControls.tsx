@@ -11,6 +11,8 @@ import {
   Sparkles,
   Camera,
   Trash2,
+  Scan,
+  CheckCircle,
 } from 'lucide-react';
 import { CameraStatus, ObservableSignals } from '../types';
 
@@ -29,6 +31,9 @@ interface InstrumentControlsProps {
   isDashboardOpen: boolean;
   onToggleDashboard: () => void;
   hasSessionData: boolean;
+  scanPresetSeconds?: number;
+  onChangeScanPreset?: (seconds: number) => void;
+  onOpenSummary?: () => void;
 }
 
 export const InstrumentControls: React.FC<InstrumentControlsProps> = ({
@@ -46,6 +51,9 @@ export const InstrumentControls: React.FC<InstrumentControlsProps> = ({
   isDashboardOpen,
   onToggleDashboard,
   hasSessionData,
+  scanPresetSeconds = 15,
+  onChangeScanPreset,
+  onOpenSummary,
 }) => {
   const isAnalyzing = status === 'analyzing';
   const isPaused = status === 'paused';
@@ -54,7 +62,7 @@ export const InstrumentControls: React.FC<InstrumentControlsProps> = ({
   return (
     <div className="w-full flex flex-col gap-3">
       {/* Primary operational deck */}
-      <div className="w-full flex flex-wrap items-center justify-between gap-2.5 p-3 rounded-2xl bg-neutral-900/75 backdrop-blur-md border border-white/10 shadow-lg">
+      <div className="w-full flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-2xl bg-neutral-900/80 backdrop-blur-md border border-white/10 shadow-lg">
         {/* Left: Main Session Action Buttons */}
         <div className="flex items-center gap-2">
           {/* Start / Pause / Resume */}
@@ -64,43 +72,53 @@ export const InstrumentControls: React.FC<InstrumentControlsProps> = ({
               onClick={onStartAnalysis}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 active:scale-[0.98] text-white text-xs sm:text-sm font-semibold tracking-wide shadow-md transition-all"
             >
-              <Play className="w-4 h-4 fill-white" />
-              Start Analysis
+              <Scan className="w-4 h-4" />
+              <span>Start Scan</span>
             </button>
           ) : isAnalyzing ? (
-            <button
-              type="button"
-              onClick={onPauseAnalysis}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-750 text-amber-300 border border-amber-500/30 text-xs sm:text-sm font-medium transition-all"
-            >
-              <Pause className="w-4 h-4" />
-              Pause
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={onEndSession}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 active:scale-[0.98] text-white text-xs sm:text-sm font-semibold shadow-md transition-all"
+              >
+                <CheckCircle className="w-4 h-4" />
+                <span>Finish Scan</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onPauseAnalysis}
+                className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-750 text-amber-300 border border-amber-500/30 text-xs sm:text-sm font-medium transition-all"
+              >
+                <Pause className="w-4 h-4" />
+                <span>Pause</span>
+              </button>
+            </>
           ) : isPaused ? (
-            <button
-              type="button"
-              onClick={onResumeAnalysis}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 active:scale-[0.98] text-white text-xs sm:text-sm font-semibold tracking-wide shadow-md transition-all"
-            >
-              <Play className="w-4 h-4 fill-white" />
-              Resume
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={onResumeAnalysis}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 active:scale-[0.98] text-white text-xs sm:text-sm font-semibold tracking-wide shadow-md transition-all"
+              >
+                <Play className="w-4 h-4 fill-white" />
+                <span>Resume</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onEndSession}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-white/10 text-xs sm:text-sm font-medium transition-colors"
+              >
+                <Square className="w-3.5 h-3.5 fill-current text-rose-400" />
+                <span>End Scan</span>
+              </button>
+            </>
           ) : null}
 
-          {/* End Session Button */}
-          {(isAnalyzing || isPaused || hasSessionData) && (
-            <button
-              type="button"
-              onClick={onEndSession}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-white/10 text-xs sm:text-sm font-medium transition-colors"
-            >
-              <Square className="w-3.5 h-3.5 fill-current text-rose-400" />
-              End Session
-            </button>
-          )}
-
           {/* Reset button */}
-          {(hasSessionData || isPaused) && (
+          {(hasSessionData || isPaused) && !isAnalyzing && (
             <button
               type="button"
               onClick={onResetSession}
@@ -110,9 +128,46 @@ export const InstrumentControls: React.FC<InstrumentControlsProps> = ({
               <RotateCcw className="w-4 h-4" />
             </button>
           )}
+
+          {/* If finished, shortcut to view results */}
+          {hasSessionData && !isAnalyzing && onOpenSummary && (
+            <button
+              type="button"
+              onClick={onOpenSummary}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-750 text-cyan-300 border border-cyan-500/30 text-xs sm:text-sm font-medium transition-colors"
+            >
+              <Activity className="w-4 h-4" />
+              <span>View Results</span>
+            </button>
+          )}
         </div>
 
-        {/* Center/Right: Sensor mode & device switches */}
+        {/* Center: Scan Mode presets (15s Quick / 30s Standard / Free) */}
+        {!isAnalyzing && onChangeScanPreset && (
+          <div className="hidden sm:flex items-center gap-1 p-1 bg-neutral-950/80 rounded-xl border border-white/10 text-xs font-mono">
+            <span className="text-[10px] text-neutral-500 px-2 uppercase tracking-wider">Mode:</span>
+            {[
+              { label: '15s Quick', value: 15 },
+              { label: '30s Deep', value: 30 },
+              { label: 'Free Scan', value: 0 },
+            ].map((p) => (
+              <button
+                key={p.value}
+                type="button"
+                onClick={() => onChangeScanPreset(p.value)}
+                className={`px-2.5 py-1 rounded-lg transition-all ${
+                  scanPresetSeconds === p.value
+                    ? 'bg-neutral-800 text-cyan-300 font-semibold shadow-sm'
+                    : 'text-neutral-400 hover:text-neutral-200'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Right: Sensor controls & toggles */}
         <div className="flex items-center gap-2">
           {/* Flip / Switch Camera (Mobile) */}
           <button
@@ -138,7 +193,7 @@ export const InstrumentControls: React.FC<InstrumentControlsProps> = ({
             {isDemoMode ? (
               <>
                 <Camera className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Use Hardware Cam</span>
+                <span className="hidden sm:inline">Hardware Cam</span>
               </>
             ) : (
               <>
@@ -154,7 +209,7 @@ export const InstrumentControls: React.FC<InstrumentControlsProps> = ({
               type="button"
               onClick={onClearSessionData}
               title="Clear all recorded session data"
-              className="p-2 rounded-xl bg-neutral-800/80 hover:bg-neutral-700 text-neutral-400 hover:text-rose-400 border border-white/10 transition-colors"
+              className="p-2 rounded-xl bg-neutral-800/80 hover:bg-neutral-750 text-neutral-400 hover:text-rose-400 border border-white/10 transition-colors"
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -163,7 +218,6 @@ export const InstrumentControls: React.FC<InstrumentControlsProps> = ({
       </div>
 
       {/* DASHBOARD EXPANSION TRIGGER (MANDATORY REQUIREMENT) */}
-      {/* "The detailed analysis dashboard must NOT be visible immediately. Provide a clear but elegant control such as: 'Open Dashboard'. When the user clicks it, the dashboard smoothly expands/opens." */}
       <div className="w-full flex items-center justify-center">
         <button
           type="button"
@@ -186,7 +240,7 @@ export const InstrumentControls: React.FC<InstrumentControlsProps> = ({
           {/* Quick telemetry indicators when collapsed */}
           {!isDashboardOpen && (isAnalyzing || isPaused) && (
             <div className="flex items-center gap-2 pl-2 border-l border-white/10 text-xs font-mono">
-              <span className="text-cyan-300 font-semibold">{signals.estimatedExpression}</span>
+              <span className="text-cyan-300 font-semibold">{signals.humanExpression}</span>
               <span className="text-neutral-400">•</span>
               <span className="text-emerald-400">{signals.visualAttention}% att</span>
             </div>

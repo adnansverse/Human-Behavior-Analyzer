@@ -6,7 +6,6 @@ import {
   BehaviorChangeObservation,
   SessionSummaryData,
   AppSettings,
-  EstimatedExpression,
 } from './types';
 import {
   DEFAULT_OBSERVABLE_SIGNALS,
@@ -18,10 +17,11 @@ import { Header } from './components/Header';
 import { CameraViewport } from './components/CameraViewport';
 import { InstrumentControls } from './components/InstrumentControls';
 import { Dashboard } from './components/Dashboard';
+import { QuickResultView } from './components/QuickResultView';
 import { SessionSummaryModal } from './components/SessionSummaryModal';
 import { SettingsModal } from './components/SettingsModal';
 import { PrivacyModal } from './components/PrivacyBanner';
-import { ShieldCheck, Sparkles } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, Scan } from 'lucide-react';
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark-glass',
@@ -57,6 +57,10 @@ export default function App() {
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null);
 
+  // Scan Preset & Progress
+  const [scanPresetSeconds, setScanPresetSeconds] = useState<number>(15); // 15s Quick Scan by default
+  const [isFinishingScan, setIsFinishingScan] = useState<boolean>(false);
+
   // State: Signals & Telemetry
   const [signals, setSignals] = useState<ObservableSignals>(DEFAULT_OBSERVABLE_SIGNALS);
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
@@ -65,8 +69,9 @@ export default function App() {
   // State: Dashboard Expansion (MANDATORY REQUIREMENT: HIDDEN INITIALLY)
   const [isDashboardOpen, setIsDashboardOpen] = useState<boolean>(false);
 
-  // Modals
+  // Modals & Summary
   const [summaryData, setSummaryData] = useState<SessionSummaryData | null>(null);
+  const [isSummaryModalOpen, setIsSummaryModalOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isPrivacyOpen, setIsPrivacyOpen] = useState<boolean>(false);
 
@@ -201,51 +206,51 @@ export default function App() {
     if (settings.enableSubtleAudio) playSubtleChime('start');
   }, [settings.enableSubtleAudio]);
 
+  // End session & compute One-Glance summary
   const handleEndSession = useCallback(() => {
-    setStatus('session-ended');
-    if (settings.enableSubtleAudio) playSubtleChime('complete');
+    if (isFinishingScan) return;
+    setIsFinishingScan(true);
 
-    // Generate clean summary
-    const summary = engineRef.current.generateSessionSummary(
-      elapsedSeconds,
-      timelineEvents,
-      observations,
-      sessionStartTime || new Date()
-    );
+    if (settings.enableSubtleAudio) {
+      playSubtleChime('complete');
+    }
 
-    if (summary) {
-      setSummaryData(summary);
-    } else {
-      // Fallback summary if session was brief
-      setSummaryData({
-        durationSeconds: elapsedSeconds,
-        formattedDuration: formatTime(elapsedSeconds),
-        dominantExpression: signals.estimatedExpression,
-        peakAttention: signals.visualAttention,
-        averageAttention: signals.visualAttention,
-        overallEngagement: signals.overallEngagement,
-        majorChangesCount: observations.length,
+    // Brief smooth settling transition (800ms)
+    setTimeout(() => {
+      setStatus('session-ended');
+      setIsFinishingScan(false);
+
+      const summary = engineRef.current.generateSessionSummary(
+        elapsedSeconds,
         timelineEvents,
         observations,
-        observationalSummaryText: `During this ${formatTime(
-          elapsedSeconds
-        )} session, visible indicators showed a dominant observable expression of ${
-          signals.estimatedExpression
-        } with ${signals.visualAttention}% visual attention. No significant baseline deviations were recorded.`,
-        startedAt: (sessionStartTime || new Date()).toLocaleTimeString(),
-        endedAt: new Date().toLocaleTimeString(),
-      });
-    }
+        sessionStartTime || new Date()
+      );
+
+      if (summary) {
+        setSummaryData(summary);
+      }
+    }, 700);
   }, [
+    isFinishingScan,
+    settings.enableSubtleAudio,
     elapsedSeconds,
     timelineEvents,
     observations,
     sessionStartTime,
-    signals.estimatedExpression,
-    signals.visualAttention,
-    signals.overallEngagement,
-    settings.enableSubtleAudio,
   ]);
+
+  // Check automated preset completion
+  useEffect(() => {
+    if (
+      status === 'analyzing' &&
+      scanPresetSeconds > 0 &&
+      elapsedSeconds >= scanPresetSeconds &&
+      !isFinishingScan
+    ) {
+      handleEndSession();
+    }
+  }, [status, scanPresetSeconds, elapsedSeconds, isFinishingScan, handleEndSession]);
 
   const handleResetSession = useCallback(() => {
     engineRef.current.reset();
@@ -253,6 +258,7 @@ export default function App() {
     setTimelineEvents([]);
     setObservations([]);
     setSessionStartTime(null);
+    setSummaryData(null);
     setStatus('ready');
   }, []);
 
@@ -262,6 +268,7 @@ export default function App() {
     setObservations([]);
     setElapsedSeconds(0);
     setSessionStartTime(null);
+    setSummaryData(null);
   }, []);
 
   // Main Optical Frame Processing Loop
@@ -342,6 +349,7 @@ export default function App() {
                     timestampSeconds: elapsedSeconds,
                     formattedTime: formatTime(elapsedSeconds),
                     expression: newSignals.estimatedExpression,
+                    humanExpression: newSignals.humanExpression || 'Neutral',
                     confidence: newSignals.confidence,
                     attentionScore: newSignals.visualAttention,
                     intensity: newSignals.intensity,
@@ -377,7 +385,6 @@ export default function App() {
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger if user is typing in an input
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
         return;
       }
@@ -393,7 +400,7 @@ export default function App() {
       } else if (e.key === 'Escape') {
         setIsSettingsOpen(false);
         setIsPrivacyOpen(false);
-        setSummaryData(null);
+        setIsSummaryModalOpen(false);
       }
     };
 
@@ -405,6 +412,12 @@ export default function App() {
   useEffect(() => {
     return () => stopCameraStream();
   }, [stopCameraStream]);
+
+  // Scan progress calculation (0 - 100)
+  const scanProgress =
+    scanPresetSeconds > 0
+      ? Math.min(100, Math.round((elapsedSeconds / scanPresetSeconds) * 100))
+      : 0;
 
   // Sizing and theme classes
   const fontClass =
@@ -455,58 +468,108 @@ export default function App() {
           </button>
         </div>
 
-        {/* PRIMARY VIEWPORT: Camera & HUD Area (Visual Center of Application) */}
-        <div className="w-full flex flex-col items-center gap-3">
-          <CameraViewport
-            status={status}
-            signals={signals}
-            settings={settings}
-            videoRef={videoRef}
-            canvasRef={canvasRef}
-            onRequestCamera={startCamera}
-            onUseDemoMode={enableDemoMode}
-            isDemoMode={isDemoMode}
-          />
+        {/* TRANSITION OVERLAY WHEN FINISHING SCAN */}
+        {isFinishingScan && (
+          <div className="w-full p-4 rounded-2xl bg-cyan-950/60 border border-cyan-500/40 backdrop-blur-md flex items-center justify-center gap-3 text-cyan-300 animate-in fade-in duration-200">
+            <CheckCircle2 className="w-5 h-5 text-cyan-400 animate-bounce" />
+            <span className="text-sm font-semibold font-mono tracking-wide">
+              Analysis complete — Synthesizing summary…
+            </span>
+          </div>
+        )}
 
-          {/* Instrument Controls Deck Directly Beneath Camera */}
-          <InstrumentControls
-            status={status}
-            signals={signals}
-            onStartAnalysis={handleStartAnalysis}
-            onPauseAnalysis={handlePauseAnalysis}
-            onResumeAnalysis={handleResumeAnalysis}
-            onEndSession={handleEndSession}
-            onResetSession={handleResetSession}
-            onClearSessionData={handleClearSessionData}
-            onFlipCamera={handleFlipCamera}
-            onToggleDemoMode={() => {
-              if (isDemoMode) startCamera();
-              else enableDemoMode();
-            }}
-            isDemoMode={isDemoMode}
-            isDashboardOpen={isDashboardOpen}
-            onToggleDashboard={() => setIsDashboardOpen((prev) => !prev)}
-            hasSessionData={timelineEvents.length > 0}
-          />
-        </div>
-
-        {/* EXPANDABLE DASHBOARD (MANDATORY REQUIREMENT: HIDDEN INITIALLY) */}
-        {/* Smoothly appears when user clicks 'Open Dashboard' */}
-        {isDashboardOpen && (
-          <div className="w-full pt-2 animate-in fade-in slide-in-from-top-4 duration-300">
-            <Dashboard
-              signals={signals}
-              timelineEvents={timelineEvents}
-              observations={observations}
-              currentDurationSeconds={elapsedSeconds}
-              settings={settings}
-              onClose={() => setIsDashboardOpen(false)}
+        {/* CASE 1: SCAN COMPLETE -> REVEAL QUICK RESULT VIEW (ONE-GLANCE SUMMARY SCREEN) */}
+        {status === 'session-ended' && summaryData ? (
+          <div className="w-full flex flex-col items-center gap-6">
+            <QuickResultView
+              summary={summaryData}
+              onScanAgain={() => {
+                handleResetSession();
+                handleStartAnalysis();
+              }}
+              onToggleFullAnalysis={() => setIsDashboardOpen((prev) => !prev)}
+              isFullAnalysisOpen={isDashboardOpen}
             />
+
+            {/* EXPANDABLE DEEP ENGINEERING DASHBOARD */}
+            {isDashboardOpen && (
+              <div className="w-full pt-4 animate-in fade-in slide-in-from-top-4 duration-300">
+                <Dashboard
+                  signals={signals}
+                  timelineEvents={timelineEvents}
+                  observations={observations}
+                  currentDurationSeconds={elapsedSeconds}
+                  settings={settings}
+                  onClose={() => setIsDashboardOpen(false)}
+                />
+              </div>
+            )}
+          </div>
+        ) : (
+          /* CASE 2: ACTIVE SCANNING VIEWPORT (CAMERA, SCAN LASER, TRACKING POINTS & CONTROLS) */
+          <div className="w-full flex flex-col items-center gap-4">
+            <CameraViewport
+              status={status}
+              signals={signals}
+              settings={settings}
+              videoRef={videoRef}
+              canvasRef={canvasRef}
+              onRequestCamera={startCamera}
+              onUseDemoMode={enableDemoMode}
+              isDemoMode={isDemoMode}
+              scanProgress={scanProgress}
+              scanPresetSeconds={scanPresetSeconds}
+              elapsedSeconds={elapsedSeconds}
+            />
+
+            {/* Instrument Controls Deck Directly Beneath Camera */}
+            <InstrumentControls
+              status={status}
+              signals={signals}
+              onStartAnalysis={handleStartAnalysis}
+              onPauseAnalysis={handlePauseAnalysis}
+              onResumeAnalysis={handleResumeAnalysis}
+              onEndSession={handleEndSession}
+              onResetSession={handleResetSession}
+              onClearSessionData={handleClearSessionData}
+              onFlipCamera={handleFlipCamera}
+              onToggleDemoMode={() => {
+                if (isDemoMode) startCamera();
+                else enableDemoMode();
+              }}
+              isDemoMode={isDemoMode}
+              isDashboardOpen={isDashboardOpen}
+              onToggleDashboard={() => setIsDashboardOpen((prev) => !prev)}
+              hasSessionData={timelineEvents.length > 0}
+              scanPresetSeconds={scanPresetSeconds}
+              onChangeScanPreset={(sec) => setScanPresetSeconds(sec)}
+              onOpenSummary={() => {
+                if (summaryData) {
+                  setStatus('session-ended');
+                } else {
+                  handleEndSession();
+                }
+              }}
+            />
+
+            {/* EXPANDABLE DASHBOARD (HIDDEN INITIALLY) */}
+            {isDashboardOpen && (
+              <div className="w-full pt-2 animate-in fade-in slide-in-from-top-4 duration-300">
+                <Dashboard
+                  signals={signals}
+                  timelineEvents={timelineEvents}
+                  observations={observations}
+                  currentDurationSeconds={elapsedSeconds}
+                  settings={settings}
+                  onClose={() => setIsDashboardOpen(false)}
+                />
+              </div>
+            )}
           </div>
         )}
       </main>
 
-      {/* Subtle Footer with Keyboard Shortcuts and Local Status */}
+      {/* Subtle Footer with Local Status */}
       <footer className="w-full border-t border-white/5 bg-neutral-950/70 px-4 sm:px-6 py-3 text-xs text-neutral-400">
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="flex items-center gap-3 text-[11px] font-mono">
@@ -533,15 +596,19 @@ export default function App() {
         </div>
       </footer>
 
-      {/* Session Summary Modal */}
-      {summaryData && (
+      {/* Session Summary Modal (if opened directly) */}
+      {isSummaryModalOpen && summaryData && (
         <SessionSummaryModal
           summary={summaryData}
-          onClose={() => setSummaryData(null)}
+          onClose={() => setIsSummaryModalOpen(false)}
           onStartNewSession={() => {
-            setSummaryData(null);
+            setIsSummaryModalOpen(false);
             handleResetSession();
             handleStartAnalysis();
+          }}
+          onViewFullAnalysis={() => {
+            setIsSummaryModalOpen(false);
+            setIsDashboardOpen(true);
           }}
         />
       )}
